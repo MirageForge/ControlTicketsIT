@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ControlTickets.Core/ControlTickets.Core.csproj" />
+    <Project Path="src/ControlTickets.Infrastructure/ControlTickets.Infrastructure.csproj" />
+    <Project Path="src/ControlTickets.UI/ControlTickets.UI.csproj" />
+    <Project Path="src/ControlTickets.Web/ControlTickets.Web.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,311 @@
+﻿@inject TicketsDbContext Db
+@inject CsvImportService CsvImporter
+
+<div class="container-fluid py-4">
+    <!-- Encabezado y Acciones -->
+    <div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-2">
+        <div>
+            <h2 class="fw-bold mb-0">Control de Tickets IT — Enterprise</h2>
+            <small class="text-muted">Gestión operativa, SLA en tiempo real y análisis de canales</small>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+            <label class="btn btn-outline-primary mb-0">
+                📥 Importar CSV (Google Sheets)
+                <InputFile OnChange="ImportarCsv" accept=".csv" class="d-none" />
+            </label>
+            <button class="btn btn-primary" @onclick="AbrirModalNuevo">+ Nuevo Ticket</button>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(mensajeAlerta))
+    {
+        <div class="alert alert-info alert-dismissible fade show">
+            @mensajeAlerta
+            <button type="button" class="btn-close" @onclick="() => mensajeAlerta = string.Empty"></button>
+        </div>
+    }
+
+    <!-- KPIs Ejecutivos (Equivalente a Reporte_Mensual y Analisis_Usuarios_Canal) -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body">
+                    <span class="text-muted small">Total Tickets</span>
+                    <h3 class="fw-bold mt-1">@tickets.Count</h3>
+                    <small class="text-secondary">Abiertos: @tickets.Count(t => t.Estatus != EstatusTicket.Cerrado)</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body">
+                    <span class="text-muted small">Cumplimiento SLA</span>
+                    <h3 class="fw-bold mt-1 text-success">@PorcentajeSla%</h3>
+                    <small class="text-secondary">Fuera de SLA: @tickets.Count(t => !t.CumpleSla)</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body">
+                    <span class="text-muted small">Adopción Portal Formal</span>
+                    <h3 class="fw-bold mt-1 text-primary">@PorcentajeFormal%</h3>
+                    <small class="text-secondary">Informal / Ad-hoc: @tickets.Count(t => !t.CanalOrigen.EsFormal)</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body">
+                    <span class="text-muted small">Tiempo Promedio Resolución</span>
+                    <h3 class="fw-bold mt-1">@PromedioDias días</h3>
+                    <small class="text-secondary">Tickets cerrados: @tickets.Count(t => t.Estatus == EstatusTicket.Cerrado)</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Formulario Rápido de Creación / Clonación -->
+    @if (mostrarFormulario)
+    {
+        <div class="card border-primary shadow-sm mb-4">
+            <div class="card-header bg-primary text-white fw-semibold">
+                @(esClonacion ? "Clonar Ticket (Registro Rápido)" : "Registrar Nuevo Ticket")
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <label class="form-label small fw-bold">ID Ticket</label>
+                        <input class="form-control" @bind="nuevoTicket.CodigoTicket" placeholder="SIN-TICKET" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small fw-bold">Solicitante</label>
+                        <input class="form-control" @bind="nuevoTicket.Solicitante" placeholder="Nombre completo" />
+                    </div>
+                    <div class="col-md-5">
+                        <label class="form-label small fw-bold">Canal de Origen</label>
+                        <select class="form-select" @bind="nuevoTicket.CanalOrigenId">
+                            @foreach (var c in canales)
+                            {
+                                <option value="@c.Id">@c.Nombre @(c.EsFormal ? "(Formal)" : "(Ad-hoc)")</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small fw-bold">Categoría</label>
+                        <select class="form-select" @bind="nuevoTicket.CategoriaId">
+                            @foreach (var cat in categorias)
+                            {
+                                <option value="@cat.Id">@cat.Nombre</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small fw-bold">Prioridad (SLA)</label>
+                        <select class="form-select" @bind="nuevoTicket.PrioridadId">
+                            @foreach (var p in prioridades)
+                            {
+                                <option value="@p.Id">@p.Nombre (@p.SlaObjetivoDias d)</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="col-md-5">
+                        <label class="form-label small fw-bold">Asunto</label>
+                        <input class="form-control" @bind="nuevoTicket.Asunto" placeholder="Descripción breve del requerimiento" />
+                    </div>
+                </div>
+                <div class="mt-3 d-flex justify-content-end gap-2">
+                    <button class="btn btn-secondary" @onclick="() => mostrarFormulario = false">Cancelar</button>
+                    <button class="btn btn-success" @onclick="GuardarTicket">Guardar Ticket</button>
+                </div>
+            </div>
+        </div>
+    }
+
+    <!-- Filtros y Tabla de Bitácora -->
+    <div class="card border-0 shadow-sm">
+        <div class="card-header bg-white py-3 d-flex flex-wrap justify-content-between align-items-center gap-2">
+            <h5 class="mb-0 fw-bold">Bitácora Operativa</h5>
+            <div class="d-flex gap-2">
+                <input class="form-control form-control-sm" style="width: 240px;"
+                       placeholder="Buscar solicitante, ID o asunto..."
+                       @bind="filtroTexto" @bind:event="oninput" />
+                <select class="form-select form-select-sm" style="width: 160px;" @bind="filtroEstatus">
+                    <option value="">Todos los estatus</option>
+                    <option value="Abierto">Abierto</option>
+                    <option value="EnProceso">En Proceso</option>
+                    <option value="Cerrado">Cerrado</option>
+                </select>
+            </div>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0 small">
+                <thead class="table-light">
+                    <tr>
+                        <th>Apertura</th>
+                        <th>ID Ticket</th>
+                        <th>Canal</th>
+                        <th>Solicitante</th>
+                        <th>Categoría</th>
+                        <th>Asunto</th>
+                        <th>Prioridad</th>
+                        <th>SLA</th>
+                        <th>Estatus</th>
+                        <th class="text-end">Acciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var t in TicketsFiltrados)
+                    {
+                        <tr>
+                            <td>@t.FechaApertura.ToString("yyyy-MM-dd")</td>
+                            <td><span class="badge bg-light text-dark border">@t.CodigoTicket</span></td>
+                            <td>
+                                <span class="badge @(t.CanalOrigen.EsFormal ? "bg-primary-subtle text-primary" : "bg-warning-subtle text-dark")">
+                                    @t.CanalOrigen.Nombre
+                                </span>
+                            </td>
+                            <td class="fw-semibold">@t.Solicitante</td>
+                            <td>@t.Categoria.Nombre</td>
+                            <td>@t.Asunto</td>
+                            <td>@t.Prioridad.Nombre</td>
+                            <td>
+                                <span class="badge @(t.CumpleSla ? "bg-success" : "bg-danger")">
+                                    @(t.CumpleSla ? $"En Tiempo ({t.TiempoResolucionDias}d)" : $"Fuera ({t.TiempoResolucionDias}d)")
+                                </span>
+                            </td>
+                            <td>
+                                <span class="badge @(t.Estatus == EstatusTicket.Cerrado ? "bg-secondary" : "bg-info text-dark")">
+                                    @t.Estatus
+                                </span>
+                            </td>
+                            <td class="text-end text-nowrap">
+                                <button class="btn btn-sm btn-outline-secondary me-1" title="Clonar ticket"
+                                        @onclick="() => ClonarTicket(t)">
+                                    Clonar
+                                </button>
+                                @if (t.Estatus != EstatusTicket.Cerrado)
+                                {
+                                    <button class="btn btn-sm btn-success" @onclick="() => CerrarTicket(t)">
+                                        Cerrar
+                                    </button>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+@code {
+    private List<Ticket> tickets = new();
+    private List<Categoria> categorias = new();
+    private List<Prioridad> prioridades = new();
+    private List<CanalOrigen> canales = new();
+
+    private Ticket nuevoTicket = new();
+    private bool mostrarFormulario;
+    private bool esClonacion;
+    private string filtroTexto = string.Empty;
+    private string filtroEstatus = string.Empty;
+    private string mensajeAlerta = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        categorias = await Db.Categorias.ToListAsync();
+        prioridades = await Db.Prioridades.ToListAsync();
+        canales = await Db.CanalesOrigen.ToListAsync();
+        await CargarTickets();
+    }
+
+    private async Task CargarTickets()
+    {
+        tickets = await Db.Tickets
+            .Include(t => t.Categoria)
+            .Include(t => t.Prioridad)
+            .Include(t => t.CanalOrigen)
+            .OrderByDescending(t => t.FechaApertura)
+            .ThenByDescending(t => t.Id)
+            .ToListAsync();
+    }
+
+    private IEnumerable<Ticket> TicketsFiltrados => tickets.Where(t =>
+        (string.IsNullOrWhiteSpace(filtroEstatus) || t.Estatus.ToString() == filtroEstatus) &&
+        (string.IsNullOrWhiteSpace(filtroTexto) ||
+         t.Solicitante.Contains(filtroTexto, StringComparison.OrdinalIgnoreCase) ||
+         t.CodigoTicket.Contains(filtroTexto, StringComparison.OrdinalIgnoreCase) ||
+         t.Asunto.Contains(filtroTexto, StringComparison.OrdinalIgnoreCase)));
+
+    private double PorcentajeSla => tickets.Count == 0 ? 100 :
+        Math.Round(tickets.Count(t => t.CumpleSla) * 100.0 / tickets.Count, 1);
+
+    private double PorcentajeFormal => tickets.Count == 0 ? 0 :
+        Math.Round(tickets.Count(t => t.CanalOrigen.EsFormal) * 100.0 / tickets.Count, 1);
+
+    private double PromedioDias
+    {
+        get
+        {
+            var cerrados = tickets.Where(t => t.Estatus == EstatusTicket.Cerrado).ToList();
+            return cerrados.Count == 0 ? 0 : Math.Round(cerrados.Average(t => t.TiempoResolucionDias), 2);
+        }
+    }
+
+    private void AbrirModalNuevo()
+    {
+        esClonacion = false;
+        nuevoTicket = new Ticket
+        {
+            CodigoTicket = "SIN-TICKET",
+            CategoriaId = categorias.First().Id,
+            PrioridadId = prioridades.First(p => p.Nombre == "Media").Id,
+            CanalOrigenId = canales.First().Id
+        };
+        mostrarFormulario = true;
+    }
+
+    private void ClonarTicket(Ticket origen)
+    {
+        esClonacion = true;
+        nuevoTicket = new Ticket
+        {
+            CodigoTicket = origen.CodigoTicket,
+            CategoriaId = origen.CategoriaId,
+            PrioridadId = origen.PrioridadId,
+            CanalOrigenId = origen.CanalOrigenId,
+            Asunto = origen.Asunto,
+            Solicitante = string.Empty // Listo para escribir solo el nuevo usuario
+        };
+        mostrarFormulario = true;
+    }
+
+    private async Task GuardarTicket()
+    {
+        if (string.IsNullOrWhiteSpace(nuevoTicket.Solicitante) || string.IsNullOrWhiteSpace(nuevoTicket.Asunto))
+            return;
+
+        nuevoTicket.FechaApertura = DateTime.Now;
+        Db.Tickets.Add(nuevoTicket);
+        await Db.SaveChangesAsync();
+        mostrarFormulario = false;
+        await CargarTickets();
+    }
+
+    private async Task CerrarTicket(Ticket ticket)
+    {
+        ticket.Estatus = EstatusTicket.Cerrado;
+        ticket.FechaCierre = DateTime.Now;
+        await Db.SaveChangesAsync();
+        await CargarTickets();
+    }
+
+    private async Task ImportarCsv(InputFileChangeEventArgs e)
+    {
+        using var stream = e.File.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
+        int total = await CsvImporter.ImportarDesdeStreamAsync(stream);
+        mensajeAlerta = $"Se importaron {total} registros correctamente desde el archivo CSV.";
+        await CargarTickets();
+    }
+}
